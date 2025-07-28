@@ -43,6 +43,7 @@ else:
     import termios
     import tty
 
+from ugv_assignment_msgs.msg import Input
 
 msg = """
 This node takes keypresses from the keyboard and publishes them
@@ -59,8 +60,8 @@ For Holonomic mode (strafing), hold down the shift key:
    J    K    L
    M    <    >
 
-t : up (+z)
-b : down (-z)
+t : brake
+b : stop brake
 
 anything else : stop
 
@@ -72,12 +73,13 @@ CTRL-C to quit
 """
 
 moveBindings = {
-    'i': (1, 0, 0, 0),
-    'o': (1, 0, 0, -1),
-    'j': (0, 0, 0, 1),
-    'l': (0, 0, 0, -1),
-    'u': (1, 0, 0, 1),
-    ',': (-1, 0, 0, 0),
+    'i': (1, 0, 0, 0),  # forward
+    'o': (1, 0, 0, 1), 
+    'j': (0, 0, 0, -1),  # left
+    'k': (0, 0, 0, 0),  # stop
+    'l': (0, 0, 0, 1),  # right
+    'u': (1, 0, 0, -1),
+    ',': (-1, 0, 0, 0),  # backward
     '.': (-1, 0, 0, 1),
     'm': (-1, 0, 0, -1),
     'O': (1, -1, 0, 0),
@@ -89,7 +91,7 @@ moveBindings = {
     '>': (-1, -1, 0, 0),
     'M': (-1, 1, 0, 0),
     't': (0, 0, 1, 0),
-    'b': (0, 0, -1, 0),
+    'b': (0, 0, 0, 0),
 }
 
 speedBindings = {
@@ -148,20 +150,22 @@ def main():
     else:
         TwistMsg = geometry_msgs.msg.Twist
 
-    pub = node.create_publisher(TwistMsg, 'cmd_vel', 10)
+    InputMsg = Input
+
+    pub = node.create_publisher(InputMsg, '/ackermann_vehicle/input', 10)
 
     spinner = threading.Thread(target=rclpy.spin, args=(node,))
     spinner.start()
 
-    speed = 0.5
-    turn = 1.0
+    speed = 50.0
+    turn = 0.1
     x = 0.0
-    y = 0.0
-    z = 0.0
+    brake = 0.0
     th = 0.0
     status = 0.0
 
-    twist_msg = TwistMsg()
+    input_msg = InputMsg()
+    twist_msg = TwistMsg() 
 
     if stamped:
         twist = twist_msg.twist
@@ -178,11 +182,19 @@ def main():
             if key in moveBindings.keys():
                 x = moveBindings[key][0]
                 y = moveBindings[key][1]
-                z = moveBindings[key][2]
                 th = moveBindings[key][3]
+                brake = moveBindings[key][2]
             elif key in speedBindings.keys():
                 speed = speed * speedBindings[key][0]
+                if speed > 100.0:
+                    speed = 100.0
+                if speed < -100.0:
+                    speed = -100.0
                 turn = turn * speedBindings[key][1]
+                if turn > 0.5:
+                    turn = 0.5
+                if turn < -0.5:
+                    turn = -0.5
 
                 print(vels(speed, turn))
                 if (status == 14):
@@ -191,7 +203,7 @@ def main():
             else:
                 x = 0.0
                 y = 0.0
-                z = 0.0
+                brake = 0.0
                 th = 0.0
                 if (key == '\x03'):
                     break
@@ -199,28 +211,22 @@ def main():
             if stamped:
                 twist_msg.header.stamp = node.get_clock().now().to_msg()
 
-            twist.linear.x = x * speed
-            twist.linear.y = y * speed
-            twist.linear.z = z * speed
-            twist.angular.x = 0.0
-            twist.angular.y = 0.0
-            twist.angular.z = th * turn
-            pub.publish(twist_msg)
+            input_msg.throttle = x * speed
+            input_msg.brake = brake * speed
+            input_msg.steering_angle = th * turn
+
+            pub.publish(input_msg)
 
     except Exception as e:
         print(e)
 
     finally:
-        if stamped:
-            twist_msg.header.stamp = node.get_clock().now().to_msg()
 
-        twist.linear.x = 0.0
-        twist.linear.y = 0.0
-        twist.linear.z = 0.0
-        twist.angular.x = 0.0
-        twist.angular.y = 0.0
-        twist.angular.z = 0.0
-        pub.publish(twist_msg)
+        input_msg.throttle = 0.0
+        input_msg.brake = 0.0
+        input_msg.steering_angle = 0.0
+        pub.publish(input_msg)
+
         rclpy.shutdown()
         spinner.join()
 
